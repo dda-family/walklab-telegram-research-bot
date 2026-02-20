@@ -24,22 +24,49 @@ if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
     raise RuntimeError("Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID in environment variables.")
 
 # =============================
-# RSS 목록 (경쟁사 + 트렌드 + 실루엣/자세)
+# RSS 목록 (경쟁사 + 트렌드 + 실루엣/자세 + EverEx)
 # =============================
 RSS_FEEDS = [
     # ===== 경쟁사 =====
+    # AIT Studio / MediStep
     'https://news.google.com/rss/search?q=("AIT+Studio"+OR+AIT스튜디오+OR+에이트스튜디오)+(MediStep+OR+메디스텝)+(gait+OR+보행)&hl=ko&gl=KR&ceid=KR:ko',
+
+    # Angel Robotics
     'https://news.google.com/rss/search?q=("Angel+Robotics"+OR+엔젤로보틱스)+("Angel+Legs"+OR+M20)+(gait+OR+rehabilitation)&hl=ko&gl=KR&ceid=KR:ko',
+
+    # WIRobotics
     'https://news.google.com/rss/search?q=("WIRobotics"+OR+위로보틱스)+(gait+OR+웨어러블)&hl=ko&gl=KR&ceid=KR:ko',
+
+    # Spina Systems / PediSol
     'https://news.google.com/rss/search?q=(PediSol+OR+페디솔+OR+"Spina+Systems")+("smart+insole"+OR+족저압)&hl=ko&gl=KR&ceid=KR:ko',
+
+    # Ochy
     'https://news.google.com/rss/search?q=(Ochy)+(gait)&hl=en-US&gl=US&ceid=US:en',
+
+    # ExaMD / LocoStep
     'https://news.google.com/rss/search?q=("LocoStep"+OR+"ExaMD")+(gait)&hl=en-US&gl=US&ceid=US:en',
+
+    # OneStep
     'https://news.google.com/rss/search?q=("OneStep")+(gait+OR+rehabilitation)&hl=en-US&gl=US&ceid=US:en',
 
+    # ===== 추가 경쟁사: EverEx (국문 2 + 영문 2) =====
+    # 전략 이벤트 감지 (KR)
+    'https://news.google.com/rss/search?q=("에버엑스"+OR+"EverEx")+(투자+OR+시리즈+OR+임상+OR+병원+OR+MOU+OR+제휴+OR+보험+OR+수가+OR+디지털치료기기+OR+DTx+OR+과제+OR+해외진출)&hl=ko&gl=KR&ceid=KR:ko',
+    # 기술/제품 방향성 (KR)
+    'https://news.google.com/rss/search?q=("에버엑스"+OR+"EverEx")+(AI+OR+영상+OR+비전+OR+분석+OR+운동코칭+OR+재활플랫폼+OR+자세+OR+실루엣+OR+군집)&hl=ko&gl=KR&ceid=KR:ko',
+    # 전략 이벤트 감지 (EN)
+    'https://news.google.com/rss/search?q=("EverEx")+(funding+OR+investment+OR+clinical+OR+hospital+OR+insurance+OR+DTx+OR+expansion+OR+partnership)&hl=en-US&gl=US&ceid=US:en',
+    # 기술 방향성 (EN)
+    'https://news.google.com/rss/search?q=("EverEx")+("digital+rehabilitation"+OR+"AI+therapy"+OR+"motion+analysis"+OR+"pose+estimation"+OR+"exercise+platform")&hl=en-US&gl=US&ceid=US:en',
+
     # ===== 트렌드 4축 =====
+    # 영상 기반 임상/검증
     'https://news.google.com/rss/search?q=("smartphone+video+gait"+OR+"video+gait+analysis")+(clinical+OR+validation)&hl=en-US&gl=US&ceid=US:en',
+    # 보험 / 리스크
     'https://news.google.com/rss/search?q=("gait+digital+biomarker"+OR+"mobility+data")+(insurance+OR+underwriting)&hl=en-US&gl=US&ceid=US:en',
+    # 고령자 낙상
     'https://news.google.com/rss/search?q=("fall+prevention"+OR+"fall+risk")+(elderly+OR+seniors)&hl=en-US&gl=US&ceid=US:en',
+    # 질환 예측
     'https://news.google.com/rss/search?q=("gait+diabetes"+OR+"gait+Parkinson")+(AI+OR+model)&hl=en-US&gl=US&ceid=US:en',
 
     # ===== 추가: 자세(실루엣) 1축(영/국문 포함) =====
@@ -55,16 +82,17 @@ COMPANY_KEYWORDS = [
     "Angel Robotics", "엔젤로보틱스", "Angel Legs", "M20",
     "WIRobotics", "위로보틱스",
     "Spina Systems", "스피나시스템즈", "PediSol", "페디솔",
-    "Ochy", "LocoStep", "ExaMD", "OneStep"
+    "Ochy", "LocoStep", "ExaMD", "OneStep",
+    "EverEx", "에버엑스"
 ]
 
 TAG_RULES = {
-    "💰투자": ["funding", "series", "investment", "raises"],
-    "🤝제휴": ["partnership", "collaboration", "mou"],
-    "🏥임상": ["clinical", "trial", "fda", "validation", "hospital"],
-    "🏛공공": ["government", "city", "public"],
-    "🛡보험": ["insurance", "underwriting", "payer"],
-    "📱영상기반": ["smartphone", "video", "camera", "markerless"],
+    "💰투자": ["funding", "series", "investment", "raises", "투자", "시리즈"],
+    "🤝제휴": ["partnership", "collaboration", "mou", "제휴", "협약", "mou"],
+    "🏥임상": ["clinical", "trial", "fda", "validation", "hospital", "임상", "병원"],
+    "🏛공공": ["government", "city", "public", "정부", "지자체", "공공"],
+    "🛡보험": ["insurance", "underwriting", "payer", "보험", "수가"],
+    "📱영상기반": ["smartphone", "video", "camera", "markerless", "영상", "비전", "카메라"],
     # 군집/실루엣/자세 관련은 모두 🧍실루엣 하나로 통합
     "🧍실루엣": [
         "silhouette analysis", "silhouette-based", "silhouette score",
@@ -138,8 +166,8 @@ def calc_priority(tags):
 
 def extract_original_url(url: str) -> str:
     """
-    Google News 링크에 url= 파라미터가 있으면 원문 URL로 바꿉니다.
-    (없으면 그대로 반환) — 제목 클릭형 링크이므로, 실패해도 가독성은 유지됩니다.
+    Google News RSS 링크에 url= 파라미터가 있으면 원문 URL로 바꿉니다.
+    (없으면 그대로 반환)
     """
     try:
         parsed = urlparse(url)
