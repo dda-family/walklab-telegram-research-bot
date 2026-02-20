@@ -1,6 +1,7 @@
 import os
 import re
 import html
+import json
 import feedparser
 import requests
 from datetime import datetime, timedelta, timezone
@@ -12,6 +13,11 @@ from urllib.parse import urlparse, parse_qs
 # =============================
 MAX_ARTICLES = 10
 TIME_WINDOW_HOURS = 48
+
+# "이미 보낸 기사" 중복 제거 (실행 간 유지)
+HISTORY_DAYS = 30
+STATE_DIR = ".cache/walklab_radar"
+STATE_FILE = os.path.join(STATE_DIR, "state.json")
 
 KST = timezone(timedelta(hours=9))
 now_kst = datetime.now(KST)
@@ -28,45 +34,24 @@ if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
 # =============================
 RSS_FEEDS = [
     # ===== 경쟁사 =====
-    # AIT Studio / MediStep
     'https://news.google.com/rss/search?q=("AIT+Studio"+OR+AIT스튜디오+OR+에이트스튜디오)+(MediStep+OR+메디스텝)+(gait+OR+보행)&hl=ko&gl=KR&ceid=KR:ko',
-
-    # Angel Robotics
     'https://news.google.com/rss/search?q=("Angel+Robotics"+OR+엔젤로보틱스)+("Angel+Legs"+OR+M20)+(gait+OR+rehabilitation)&hl=ko&gl=KR&ceid=KR:ko',
-
-    # WIRobotics
     'https://news.google.com/rss/search?q=("WIRobotics"+OR+위로보틱스)+(gait+OR+웨어러블)&hl=ko&gl=KR&ceid=KR:ko',
-
-    # Spina Systems / PediSol
     'https://news.google.com/rss/search?q=(PediSol+OR+페디솔+OR+"Spina+Systems")+("smart+insole"+OR+족저압)&hl=ko&gl=KR&ceid=KR:ko',
-
-    # Ochy
     'https://news.google.com/rss/search?q=(Ochy)+(gait)&hl=en-US&gl=US&ceid=US:en',
-
-    # ExaMD / LocoStep
     'https://news.google.com/rss/search?q=("LocoStep"+OR+"ExaMD")+(gait)&hl=en-US&gl=US&ceid=US:en',
-
-    # OneStep
     'https://news.google.com/rss/search?q=("OneStep")+(gait+OR+rehabilitation)&hl=en-US&gl=US&ceid=US:en',
 
     # ===== 추가 경쟁사: EverEx (국문 2 + 영문 2) =====
-    # 전략 이벤트 감지 (KR)
     'https://news.google.com/rss/search?q=("에버엑스"+OR+"EverEx")+(투자+OR+시리즈+OR+임상+OR+병원+OR+MOU+OR+제휴+OR+보험+OR+수가+OR+디지털치료기기+OR+DTx+OR+과제+OR+해외진출)&hl=ko&gl=KR&ceid=KR:ko',
-    # 기술/제품 방향성 (KR)
     'https://news.google.com/rss/search?q=("에버엑스"+OR+"EverEx")+(AI+OR+영상+OR+비전+OR+분석+OR+운동코칭+OR+재활플랫폼+OR+자세+OR+실루엣+OR+군집)&hl=ko&gl=KR&ceid=KR:ko',
-    # 전략 이벤트 감지 (EN)
     'https://news.google.com/rss/search?q=("EverEx")+(funding+OR+investment+OR+clinical+OR+hospital+OR+insurance+OR+DTx+OR+expansion+OR+partnership)&hl=en-US&gl=US&ceid=US:en',
-    # 기술 방향성 (EN)
     'https://news.google.com/rss/search?q=("EverEx")+("digital+rehabilitation"+OR+"AI+therapy"+OR+"motion+analysis"+OR+"pose+estimation"+OR+"exercise+platform")&hl=en-US&gl=US&ceid=US:en',
 
     # ===== 트렌드 4축 =====
-    # 영상 기반 임상/검증
     'https://news.google.com/rss/search?q=("smartphone+video+gait"+OR+"video+gait+analysis")+(clinical+OR+validation)&hl=en-US&gl=US&ceid=US:en',
-    # 보험 / 리스크
     'https://news.google.com/rss/search?q=("gait+digital+biomarker"+OR+"mobility+data")+(insurance+OR+underwriting)&hl=en-US&gl=US&ceid=US:en',
-    # 고령자 낙상
     'https://news.google.com/rss/search?q=("fall+prevention"+OR+"fall+risk")+(elderly+OR+seniors)&hl=en-US&gl=US&ceid=US:en',
-    # 질환 예측
     'https://news.google.com/rss/search?q=("gait+diabetes"+OR+"gait+Parkinson")+(AI+OR+model)&hl=en-US&gl=US&ceid=US:en',
 
     # ===== 추가: 자세(실루엣) 1축(영/국문 포함) =====
@@ -93,7 +78,6 @@ TAG_RULES = {
     "🏛공공": ["government", "city", "public", "정부", "지자체", "공공"],
     "🛡보험": ["insurance", "underwriting", "payer", "보험", "수가"],
     "📱영상기반": ["smartphone", "video", "camera", "markerless", "영상", "비전", "카메라"],
-    # 군집/실루엣/자세 관련은 모두 🧍실루엣 하나로 통합
     "🧍실루엣": [
         "silhouette analysis", "silhouette-based", "silhouette score",
         "clustering", "cluster analysis",
@@ -102,6 +86,9 @@ TAG_RULES = {
     ]
 }
 
+# =============================
+# 유틸
+# =============================
 def send_telegram(message: str):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
@@ -180,12 +167,69 @@ def extract_original_url(url: str) -> str:
 
 def format_item(i: int, tags, title: str, link: str) -> str:
     safe_title = html.escape(title)
-    safe_link = html.escape(extract_original_url(link))
+    safe_link = html.escape(link)
     tag_text = " ".join(tags) if tags else ""
-    # 제목 클릭형 링크: 긴 URL을 메시지에 노출하지 않음
     return f"{i}. {tag_text}\n<a href=\"{safe_link}\">{safe_title}</a>\n"
 
+# =============================
+# 상태(히스토리) 저장/로드: 30일
+# =============================
+def load_state():
+    os.makedirs(STATE_DIR, exist_ok=True)
+    if not os.path.exists(STATE_FILE):
+        return {"sent": []}
+
+    try:
+        with open(STATE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if "sent" not in data or not isinstance(data["sent"], list):
+            return {"sent": []}
+        return data
+    except Exception:
+        return {"sent": []}
+
+def prune_state(state):
+    keep_after = now_kst - timedelta(days=HISTORY_DAYS)
+    pruned = []
+    for item in state.get("sent", []):
+        try:
+            ts = dateparser.parse(item.get("sent_at"))
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            ts_kst = ts.astimezone(KST)
+            if ts_kst >= keep_after:
+                pruned.append(item)
+        except Exception:
+            # 파싱 실패 항목은 버림
+            continue
+    state["sent"] = pruned
+    return state
+
+def save_state(state):
+    os.makedirs(STATE_DIR, exist_ok=True)
+    with open(STATE_FILE, "w", encoding="utf-8") as f:
+        json.dump(state, f, ensure_ascii=False, indent=2)
+
+def build_history_sets(state):
+    url_set = set()
+    title_set = set()
+    for item in state.get("sent", []):
+        u = (item.get("url") or "").strip()
+        t = (item.get("title_norm") or "").strip()
+        if u:
+            url_set.add(u)
+        if t:
+            title_set.add(t)
+    return url_set, title_set
+
+# =============================
+# 메인
+# =============================
 def main():
+    # 히스토리 로드 + 30일 프루닝
+    state = prune_state(load_state())
+    sent_url_set, sent_title_set = build_history_sets(state)
+
     articles = []
     seen_links = set()
     seen_titles = set()
@@ -200,17 +244,23 @@ def main():
             if published_kst < cutoff_kst:
                 continue
 
-            link = getattr(entry, "link", "").strip()
+            raw_link = getattr(entry, "link", "").strip()
             title = getattr(entry, "title", "").strip()
             summary = getattr(entry, "summary", "")
 
-            if not link or not title:
+            if not raw_link or not title:
                 continue
 
+            # 원문 링크로 정규화(중복 판단의 핵심)
+            link = extract_original_url(raw_link).strip()
             norm_title = normalize_title(title)
 
-            # 중복 제거 (링크 + 제목)
+            # (실행 내부) 중복 제거
             if link in seen_links or norm_title in seen_titles:
+                continue
+
+            # (실행 간) 이미 보낸 기사 필터: URL + 제목(정규화) 기준
+            if link in sent_url_set or norm_title in sent_title_set:
                 continue
 
             seen_links.add(link)
@@ -221,29 +271,31 @@ def main():
 
             articles.append({
                 "title": title,
+                "title_norm": norm_title,
                 "link": link,
                 "tags": tags,
                 "priority": priority,
                 "published_kst": published_kst
             })
 
-    # 전체 우선순위 정렬 후 상위 10건만 컷
+    # 우선순위/최신순 정렬 후 상위 10건
     articles.sort(key=lambda x: (x["priority"], x["published_kst"]), reverse=True)
     top = articles[:MAX_ARTICLES]
 
     if not top:
-        send_telegram("📡 오늘 신규 기사 없음 (최근 48시간 기준)")
+        send_telegram("📡 신규 기사 없음 (최근 48시간 / 중복 제외)")
+        # 프루닝 결과는 저장(파일 손상 대비)
+        save_state(state)
         return
 
     # 구역 분리(상위 10건 안에서만)
     competitors = [a for a in top if "🏢경쟁사" in a["tags"]]
     trends = [a for a in top if "🏢경쟁사" not in a["tags"]]
 
-    # 섹션 내에서도 우선순위/최신순 유지
     competitors.sort(key=lambda x: (x["priority"], x["published_kst"]), reverse=True)
     trends.sort(key=lambda x: (x["priority"], x["published_kst"]), reverse=True)
 
-    msg = "📡 <b>워크랩 리서치 브리핑</b>\n(최근 48시간 / 상위 10건)\n\n"
+    msg = "📡 <b>워크랩 리서치 브리핑</b>\n(최근 48시간 / 중복 제외 / 상위 10건)\n\n"
 
     if competitors:
         msg += "━━━━━━━━━━\n<b>🏢 경쟁사 흐름</b>\n━━━━━━━━━━\n"
@@ -255,7 +307,20 @@ def main():
         for i, a in enumerate(trends, 1):
             msg += format_item(i, a["tags"], a["title"], a["link"]) + "\n"
 
+    # 전송
     send_telegram(msg)
+
+    # 전송 성공한 항목들을 히스토리에 기록 (30일 유지)
+    sent_at = now_kst.isoformat()
+    for a in top:
+        state["sent"].append({
+            "url": a["link"],
+            "title_norm": a["title_norm"],
+            "sent_at": sent_at
+        })
+
+    # 저장 (actions/cache가 다음 실행에 복원)
+    save_state(state)
 
 if __name__ == "__main__":
     main()
