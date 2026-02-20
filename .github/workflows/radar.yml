@@ -3,10 +3,7 @@ name: Walklab Telegram Radar
 on:
   schedule:
     - cron: "*/5 * * * *"
-    # GitHub Actions는 UTC 기준
-    # KST 08:00 = UTC 23:00 (전날)
     - cron: "0 23 * * *"
-    # KST 17:00 = UTC 08:00
     - cron: "0 8 * * *"
   workflow_dispatch:
 
@@ -16,6 +13,14 @@ jobs:
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
+
+      - name: Restore cache (sent history)
+        uses: actions/cache@v4
+        with:
+          path: .cache/walklab_radar
+          key: walklab-radar-state-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            walklab-radar-state-${{ runner.os }}-
 
       - name: Set up Python
         uses: actions/setup-python@v5
