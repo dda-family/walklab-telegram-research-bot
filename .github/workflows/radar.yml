@@ -2,8 +2,10 @@ name: Walklab Telegram Radar
 
 on:
   schedule:
-    - cron: "0 23 * * *"
-    - cron: "0 8 * * *"
+    # KST 08:00 (월~금) = UTC 23:00 (일~목)
+    - cron: "0 23 * * 0-4"
+    # KST 17:00 (월~금) = UTC 08:00 (월~금)
+    - cron: "0 8 * * 1-5"
   workflow_dispatch:
 
 jobs:
