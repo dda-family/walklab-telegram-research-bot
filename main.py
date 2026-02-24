@@ -14,7 +14,7 @@ from urllib.parse import urlparse, parse_qs
 MAX_ARTICLES = 10
 TIME_WINDOW_HOURS = 48
 
-# "이미 보낸 기사" 중복 제거 (실행 간 유지)
+# 실행 간 중복 제거(히스토리 유지)
 HISTORY_DAYS = 30
 STATE_DIR = ".cache/walklab_radar"
 STATE_FILE = os.path.join(STATE_DIR, "state.json")
@@ -60,30 +60,79 @@ RSS_FEEDS = [
 ]
 
 # =============================
-# 태그 분류
+# 경쟁사(회사명) 감지 키워드
 # =============================
+# 매칭되면 "경쟁사 섹션"으로 분류하고, 번호줄에 [회사명] 표시
 COMPANY_KEYWORDS = [
-    "AIT Studio", "AIT스튜디오", "에이트스튜디오", "MediStep", "메디스텝",
+    # 국내
+    "EverEx", "에버엑스",
+    "AIT Studio", "AIT스튜디오", "에이트스튜디오",
+    "MediStep", "메디스텝",
     "Angel Robotics", "엔젤로보틱스", "Angel Legs", "M20",
     "WIRobotics", "위로보틱스",
-    "Spina Systems", "스피나시스템즈", "PediSol", "페디솔",
-    "Ochy", "LocoStep", "ExaMD", "OneStep",
-    "EverEx", "에버엑스"
+    "Spina Systems", "스피나시스템즈",
+    "PediSol", "페디솔",
+    # 해외
+    "Ochy",
+    "LocoStep", "ExaMD",
+    "OneStep",
 ]
 
+# 번호줄에 표기할 "대표 회사명" (동의어 통합)
+COMPANY_CANONICAL = {
+    "에버엑스": "EverEx",
+    "everex": "EverEx",
+
+    "ait studio": "AIT Studio",
+    "ait스튜디오": "AIT Studio",
+    "에이트스튜디오": "AIT Studio",
+
+    "medistep": "MediStep",
+    "메디스텝": "MediStep",
+
+    "angel robotics": "Angel Robotics",
+    "엔젤로보틱스": "Angel Robotics",
+    "angel legs": "Angel Robotics",
+    "m20": "Angel Robotics",
+
+    "wirobotics": "WIRobotics",
+    "위로보틱스": "WIRobotics",
+
+    "spina systems": "Spina Systems",
+    "스피나시스템즈": "Spina Systems",
+
+    "pedisol": "PediSol",
+    "페디솔": "PediSol",
+
+    "ochy": "Ochy",
+
+    "locostep": "LocoStep",
+    "examd": "ExaMD",
+
+    "onestep": "OneStep",
+}
+
+# =============================
+# 태그 규칙 (전략 + 기술 혼합 허용)
+# =============================
 TAG_RULES = {
-    "💰투자": ["funding", "series", "investment", "raises", "투자", "시리즈"],
-    "🤝제휴": ["partnership", "collaboration", "mou", "제휴", "협약", "mou"],
-    "🏥임상": ["clinical", "trial", "fda", "validation", "hospital", "임상", "병원"],
-    "🏛공공": ["government", "city", "public", "정부", "지자체", "공공"],
-    "🛡보험": ["insurance", "underwriting", "payer", "보험", "수가"],
-    "📱영상기반": ["smartphone", "video", "camera", "markerless", "영상", "비전", "카메라"],
+    # 전략/사업 신호
+    "💰투자": ["funding", "series", "investment", "raises", "seed", "pre-seed", "round", "투자", "시리즈", "유치"],
+    "🤝제휴": ["partnership", "collaboration", "mou", "alliance", "제휴", "협약", "업무협약", "파트너십"],
+    "🏥임상": ["clinical", "trial", "validation", "hospital", "fda", "ce mark", "임상", "병원", "검증", "시험"],
+    "🏛공공": ["government", "city", "public", "municipal", "정부", "지자체", "공공"],
+    "🛡보험": ["insurance", "underwriting", "payer", "reimbursement", "cpt", "보험", "수가", "언더라이팅"],
+
+    # 기술 축
+    "📱영상기반": ["smartphone", "video", "camera", "vision", "markerless", "pose estimation", "영상", "비전", "카메라", "포즈"],
     "🧍실루엣": [
         "silhouette analysis", "silhouette-based", "silhouette score",
         "clustering", "cluster analysis",
-        "posture", "pose estimation", "biomechanics",
-        "실루엣", "자세", "포즈추정", "군집분석"
-    ]
+        "posture", "biomechanics",
+        "실루엣", "자세", "군집분석", "체형"
+    ],
+    "🧠AI": ["ai", "ml", "deep learning", "neural", "model", "machine learning", "인공지능", "딥러닝", "머신러닝", "모델"],
+    "🏃운동/재활": ["rehab", "rehabilitation", "therapy", "exercise", "coaching", "physio", "재활", "운동", "코칭", "치료"],
 }
 
 # =============================
@@ -97,7 +146,7 @@ def send_telegram(message: str):
         "parse_mode": "HTML",
         "disable_web_page_preview": True
     }
-    r = requests.post(url, data=payload, timeout=20)
+    r = requests.post(url, data=payload, timeout=25)
     r.raise_for_status()
 
 def normalize_title(title: str) -> str:
@@ -114,47 +163,9 @@ def parse_published_kst(entry):
             return None
     return None
 
-def classify_tags(title: str, summary: str):
-    text = (title + " " + summary).lower()
-    tags = []
-
-    for kw in COMPANY_KEYWORDS:
-        if kw.lower() in text:
-            tags.append("🏢경쟁사")
-            break
-
-    for tag, kws in TAG_RULES.items():
-        for k in kws:
-            if k.lower() in text:
-                tags.append(tag)
-                break
-
-    return tags
-
-def calc_priority(tags):
-    score = 0
-    if "🏢경쟁사" in tags:
-        score += 100
-    if "💰투자" in tags:
-        score += 30
-    if "🏥임상" in tags:
-        score += 30
-    if "🤝제휴" in tags:
-        score += 20
-    if "🛡보험" in tags:
-        score += 15
-    if "🏛공공" in tags:
-        score += 15
-    if "🧍실루엣" in tags:
-        score += 10
-    if "📱영상기반" in tags:
-        score += 8
-    return score
-
 def extract_original_url(url: str) -> str:
     """
-    Google News RSS 링크에 url= 파라미터가 있으면 원문 URL로 바꿉니다.
-    (없으면 그대로 반환)
+    Google News RSS 링크에 url= 파라미터가 있으면 원문 URL로 변환.
     """
     try:
         parsed = urlparse(url)
@@ -165,11 +176,100 @@ def extract_original_url(url: str) -> str:
         pass
     return url
 
-def format_item(i: int, tags, title: str, link: str) -> str:
+def strip_html(text: str) -> str:
+    if not text:
+        return ""
+    # HTML 태그 제거
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = html.unescape(text)
+    # 공백 정리
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+def truncate_snippet(text: str, limit: int = 200) -> str:
+    if not text:
+        return ""
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + "..."
+
+def detect_company(title: str, summary: str):
+    """
+    텍스트에 경쟁사 키워드가 있으면 (is_competitor, canonical_company_name) 반환.
+    여러 개면 COMPANY_KEYWORDS 순서대로 첫 매칭을 사용.
+    """
+    blob = (title + " " + summary).lower()
+    for kw in COMPANY_KEYWORDS:
+        if kw.lower() in blob:
+            canon = COMPANY_CANONICAL.get(kw.lower(), kw)
+            return True, canon
+    # 동의어/케이스 차이 대비: canonical mapping 전체를 한번 더 검색
+    for raw, canon in COMPANY_CANONICAL.items():
+        if raw in blob:
+            return True, canon
+    return False, None
+
+def classify_tags(title: str, summary: str):
+    text = (title + " " + summary).lower()
+    tags = []
+    for tag, kws in TAG_RULES.items():
+        for k in kws:
+            if k.lower() in text:
+                tags.append(tag)
+                break
+    return tags
+
+def calc_priority(is_competitor: bool, tags):
+    # 경쟁사 우선, 그 다음 전략 신호 우선
+    score = 0
+    if is_competitor:
+        score += 100
+
+    if "💰투자" in tags:
+        score += 30
+    if "🏥임상" in tags:
+        score += 25
+    if "🤝제휴" in tags:
+        score += 18
+    if "🛡보험" in tags:
+        score += 15
+    if "🏛공공" in tags:
+        score += 12
+
+    # 기술 태그는 보조 가중치
+    if "🧍실루엣" in tags:
+        score += 10
+    if "📱영상기반" in tags:
+        score += 8
+    if "🧠AI" in tags:
+        score += 6
+    if "🏃운동/재활" in tags:
+        score += 6
+
+    return score
+
+def format_tags(tags):
+    # 태그는 ' · ' 로 연결
+    return " · ".join(tags) if tags else ""
+
+def format_competitor_line(idx: int, company: str, tags):
+    # 번호줄: 회사명 굵게 + [ ] + 태그만
+    # 예: 1. <b>[EverEx]</b> · 💰투자 · 🧠AI
+    tag_text = format_tags(tags)
+    if tag_text:
+        return f'{idx}. <b>[{html.escape(company)}]</b> · {html.escape(tag_text)}'
+    return f'{idx}. <b>[{html.escape(company)}]</b>'
+
+def format_trend_line(idx: int, tags):
+    # 번호줄: 태그만
+    # 예: 1. 🧍실루엣 · 📱영상기반 · 🧠AI
+    tag_text = format_tags(tags)
+    return f'{idx}. {html.escape(tag_text)}' if tag_text else f'{idx}.'
+
+def format_title_link(title: str, link: str) -> str:
     safe_title = html.escape(title)
     safe_link = html.escape(link)
-    tag_text = " ".join(tags) if tags else ""
-    return f"{i}. {tag_text}\n<a href=\"{safe_link}\">{safe_title}</a>\n"
+    return f'<b><a href="{safe_link}">{safe_title}</a></b>'
 
 # =============================
 # 상태(히스토리) 저장/로드: 30일
@@ -200,7 +300,6 @@ def prune_state(state):
             if ts_kst >= keep_after:
                 pruned.append(item)
         except Exception:
-            # 파싱 실패 항목은 버림
             continue
     state["sent"] = pruned
     return state
@@ -246,34 +345,47 @@ def main():
 
             raw_link = getattr(entry, "link", "").strip()
             title = getattr(entry, "title", "").strip()
-            summary = getattr(entry, "summary", "")
+            raw_summary = getattr(entry, "summary", "") or ""
 
             if not raw_link or not title:
                 continue
 
-            # 원문 링크로 정규화(중복 판단의 핵심)
             link = extract_original_url(raw_link).strip()
             norm_title = normalize_title(title)
 
-            # (실행 내부) 중복 제거
+            # 실행 내부 중복 제거 (URL/제목)
             if link in seen_links or norm_title in seen_titles:
                 continue
 
-            # (실행 간) 이미 보낸 기사 필터: URL + 제목(정규화) 기준
+            # 실행 간 중복 제거 (URL + 제목 정규화)
             if link in sent_url_set or norm_title in sent_title_set:
                 continue
 
             seen_links.add(link)
             seen_titles.add(norm_title)
 
-            tags = classify_tags(title, summary)
-            priority = calc_priority(tags)
+            clean_summary = strip_html(raw_summary)
+            snippet = truncate_snippet(clean_summary, 200)
+
+            is_competitor, company = detect_company(title, clean_summary)
+            tags = classify_tags(title, clean_summary)
+
+            # 표시 태그는 너무 많아지지 않게 1~4개 정도로 제한 (가독성)
+            # 우선순위: 투자/임상/제휴/보험/공공/실루엣/영상/AI/운동
+            tag_order = ["💰투자", "🏥임상", "🤝제휴", "🛡보험", "🏛공공", "🧍실루엣", "📱영상기반", "🧠AI", "🏃운동/재활"]
+            tags_sorted = [t for t in tag_order if t in tags]
+            tags_display = tags_sorted[:4]
+
+            priority = calc_priority(is_competitor, tags)
 
             articles.append({
                 "title": title,
                 "title_norm": norm_title,
                 "link": link,
-                "tags": tags,
+                "snippet": snippet,
+                "is_competitor": is_competitor,
+                "company": company,
+                "tags": tags_display,
                 "priority": priority,
                 "published_kst": published_kst
             })
@@ -284,13 +396,11 @@ def main():
 
     if not top:
         send_telegram("📡 신규 기사 없음 (최근 48시간 / 중복 제외)")
-        # 프루닝 결과는 저장(파일 손상 대비)
         save_state(state)
         return
 
-    # 구역 분리(상위 10건 안에서만)
-    competitors = [a for a in top if "🏢경쟁사" in a["tags"]]
-    trends = [a for a in top if "🏢경쟁사" not in a["tags"]]
+    competitors = [a for a in top if a["is_competitor"]]
+    trends = [a for a in top if not a["is_competitor"]]
 
     competitors.sort(key=lambda x: (x["priority"], x["published_kst"]), reverse=True)
     trends.sort(key=lambda x: (x["priority"], x["published_kst"]), reverse=True)
@@ -298,19 +408,27 @@ def main():
     msg = "📡 <b>워크랩 리서치 브리핑</b>\n(최근 48시간 / 중복 제외 / 상위 10건)\n\n"
 
     if competitors:
-        msg += "━━━━━━━━━━\n<b>🏢 경쟁사 흐름</b>\n━━━━━━━━━━\n"
+        msg += "━━━━━━━━━━\n<b>🏢 경쟁사 흐름</b>\n━━━━━━━━━━\n\n"
         for i, a in enumerate(competitors, 1):
-            msg += format_item(i, a["tags"], a["title"], a["link"]) + "\n"
+            company = a["company"] or "경쟁사"
+            msg += format_competitor_line(i, company, a["tags"]) + "\n"
+            msg += format_title_link(a["title"], a["link"]) + "\n"
+            if a["snippet"]:
+                msg += f"- {html.escape(a['snippet'])}\n"
+            msg += "\n"
 
     if trends:
-        msg += "━━━━━━━━━━\n<b>📈 기술 트렌드</b>\n━━━━━━━━━━\n"
+        msg += "━━━━━━━━━━\n<b>📈 기술 트렌드</b>\n━━━━━━━━━━\n\n"
         for i, a in enumerate(trends, 1):
-            msg += format_item(i, a["tags"], a["title"], a["link"]) + "\n"
+            msg += format_trend_line(i, a["tags"]) + "\n"
+            msg += format_title_link(a["title"], a["link"]) + "\n"
+            if a["snippet"]:
+                msg += f"- {html.escape(a['snippet'])}\n"
+            msg += "\n"
 
-    # 전송
     send_telegram(msg)
 
-    # 전송 성공한 항목들을 히스토리에 기록 (30일 유지)
+    # 전송 성공 항목 기록 (30일 유지) — 상위 10건(top) 기준
     sent_at = now_kst.isoformat()
     for a in top:
         state["sent"].append({
@@ -319,7 +437,6 @@ def main():
             "sent_at": sent_at
         })
 
-    # 저장 (actions/cache가 다음 실행에 복원)
     save_state(state)
 
 if __name__ == "__main__":
