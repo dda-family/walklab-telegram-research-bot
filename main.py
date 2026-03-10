@@ -115,14 +115,12 @@ COMPANY_CANONICAL = {
 # 태그 규칙
 # =============================
 TAG_RULES = {
-    # 전략/사업 신호
     "💰투자": ["funding", "series", "investment", "raises", "seed", "pre-seed", "round", "투자", "시리즈", "유치"],
     "🤝제휴": ["partnership", "collaboration", "mou", "alliance", "제휴", "협약", "업무협약", "파트너십"],
     "🏥임상": ["clinical", "trial", "validation", "hospital", "fda", "ce mark", "임상", "병원", "검증", "시험"],
     "🏛공공": ["government", "city", "public", "municipal", "정부", "지자체", "공공"],
     "🛡보험": ["insurance", "underwriting", "payer", "reimbursement", "cpt", "보험", "수가", "언더라이팅"],
 
-    # 기술 축
     "📱영상기반": ["smartphone", "video", "camera", "vision", "markerless", "pose estimation", "영상", "비전", "카메라", "포즈"],
     "🧍실루엣": [
         "silhouette analysis", "silhouette-based", "silhouette score",
@@ -253,7 +251,7 @@ def format_title_link(title: str, link: str) -> str:
     safe_link = html.escape(link)
     return f'<b><a href="{safe_link}">{safe_title}</a></b>'
 
-def extract_week_label(title: str, summary: str) -> str | None:
+def extract_week_label(title: str, summary: str):
     text = f"{title} {summary}"
     m = re.search(r'(\d{1,2})월\s*(첫째|둘째|셋째|넷째|다섯째)주', text)
     if m:
@@ -262,7 +260,7 @@ def extract_week_label(title: str, summary: str) -> str | None:
         return f"{month}월 {nth}"
     return None
 
-def build_week_key(published_kst: datetime, week_label: str | None) -> str | None:
+def build_week_key(published_kst: datetime, week_label: str):
     if not week_label:
         return None
     return f"{published_kst.year}-{week_label}"
@@ -360,18 +358,16 @@ def main():
             clean_summary = strip_html(raw_summary)
             snippet = truncate_snippet(clean_summary, 200)
 
-            # ===== 이주의 투자유치: 전용 RSS에서 온 기사만 분류 =====
+            # ===== 이주의 투자유치: 전용 RSS에서 온 기사만 =====
             if feed_url == WEEKLY_FUNDING_FEED:
                 week_label = extract_week_label(title, clean_summary)
                 weekly_key = build_week_key(published_kst, week_label)
 
-                # 실행 내부 중복
                 if link in seen_links or norm_title in seen_titles:
                     continue
                 if weekly_key and weekly_key in seen_weekly_keys:
                     continue
 
-                # 실행 간 중복
                 if link in sent_url_set or norm_title in sent_title_set:
                     continue
                 if weekly_key and weekly_key in sent_weekly_key_set:
@@ -424,7 +420,6 @@ def main():
                 "published_kst": published_kst
             })
 
-    # 경쟁사/기술 트렌드는 상위 10건
     regular_articles.sort(key=lambda x: (x["priority"], x["published_kst"]), reverse=True)
     top_regular = regular_articles[:MAX_ARTICLES]
 
@@ -434,12 +429,10 @@ def main():
     competitors.sort(key=lambda x: (x["priority"], x["published_kst"]), reverse=True)
     trends.sort(key=lambda x: (x["priority"], x["published_kst"]), reverse=True)
 
-    # 투자유치 섹션은 최신순
     weekly_funding_articles.sort(key=lambda x: x["published_kst"], reverse=True)
 
-    # 전부 비어 있으면 종료
+    # 신규 기사 없으면 발송하지 않고 종료
     if not competitors and not trends and not weekly_funding_articles:
-        send_telegram("📡 신규 기사 없음 (최근 48시간 / 중복 제외)")
         save_state(state)
         return
 
@@ -466,7 +459,7 @@ def main():
                 msg += f"- {html.escape(a['snippet'])}\n"
             msg += "\n"
 
-    # 3) 이주의 투자유치 (항상 마지막)
+    # 3) 이주의 투자유치
     if weekly_funding_articles:
         msg += "━━━━━━━━━━\n<b>💸 이주의 투자유치</b>\n━━━━━━━━━━\n\n"
         for a in weekly_funding_articles:
@@ -478,7 +471,6 @@ def main():
 
     send_telegram(msg)
 
-    # 전송 성공 항목들 기록
     sent_at = now_kst.isoformat()
 
     for a in top_regular:
