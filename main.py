@@ -32,6 +32,8 @@ if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
 # =============================
 # RSS 목록
 # =============================
+WEEKLY_FUNDING_FEED = 'https://news.google.com/rss/search?q=site:unicornfactory.co.kr+"[이주의+투자유치]"&hl=ko&gl=KR&ceid=KR:ko'
+
 RSS_FEEDS = [
     # ===== 경쟁사 =====
     'https://news.google.com/rss/search?q=("AIT+Studio"+OR+AIT스튜디오+OR+에이트스튜디오)+(MediStep+OR+메디스텝)+(gait+OR+보행)&hl=ko&gl=KR&ceid=KR:ko',
@@ -56,8 +58,8 @@ RSS_FEEDS = [
     'https://news.google.com/rss/search?q=("silhouette+analysis"+OR+"silhouette-based"+OR+"silhouette+score"+OR+clustering)+("posture"+OR+"pose+estimation"+OR+"motion+analysis"+OR+"biomechanics")+(gait+OR+rehabilitation+OR+healthcare+OR+clinical)&hl=en-US&gl=US&ceid=US:en',
     'https://news.google.com/rss/search?q=(실루엣+OR+자세+OR+포즈추정+OR+군집분석)+(보행+OR+재활+OR+헬스케어+OR+의료)+-패션+-의류+-사진&hl=ko&gl=KR&ceid=KR:ko',
 
-    # ===== 이주의 투자유치 =====
-    'https://news.google.com/rss/search?q=site:unicornfactory.co.kr+"[이주의+투자유치]"&hl=ko&gl=KR&ceid=KR:ko',
+    # ===== 이주의 투자유치 (전용) =====
+    WEEKLY_FUNDING_FEED,
 ]
 
 # =============================
@@ -251,11 +253,6 @@ def format_title_link(title: str, link: str) -> str:
     safe_link = html.escape(link)
     return f'<b><a href="{safe_link}">{safe_title}</a></b>'
 
-def is_weekly_funding_article(title: str, summary: str, link: str) -> bool:
-    text = (title + " " + summary).lower()
-    link_l = (link or "").lower()
-    return ("unicornfactory.co.kr" in link_l) and ("[이주의 투자유치]" in title or "[이주의 투자유치]" in summary or "[이주의 투자유치]" in text)
-
 def extract_week_label(title: str, summary: str) -> str | None:
     text = f"{title} {summary}"
     m = re.search(r'(\d{1,2})월\s*(첫째|둘째|셋째|넷째|다섯째)주', text)
@@ -360,24 +357,24 @@ def main():
 
             link = extract_original_url(raw_link).strip()
             norm_title = normalize_title(title)
-
-            if link in seen_links or norm_title in seen_titles:
-                continue
-
             clean_summary = strip_html(raw_summary)
             snippet = truncate_snippet(clean_summary, 200)
 
-            # ===== 이주의 투자유치 =====
-            if is_weekly_funding_article(title, clean_summary, link):
+            # ===== 이주의 투자유치: 전용 RSS에서 온 기사만 분류 =====
+            if feed_url == WEEKLY_FUNDING_FEED:
                 week_label = extract_week_label(title, clean_summary)
                 weekly_key = build_week_key(published_kst, week_label)
 
                 # 실행 내부 중복
+                if link in seen_links or norm_title in seen_titles:
+                    continue
                 if weekly_key and weekly_key in seen_weekly_keys:
                     continue
 
-                # 실행 간 중복(URL/제목/주차)
-                if link in sent_url_set or norm_title in sent_title_set or (weekly_key and weekly_key in sent_weekly_key_set):
+                # 실행 간 중복
+                if link in sent_url_set or norm_title in sent_title_set:
+                    continue
+                if weekly_key and weekly_key in sent_weekly_key_set:
                     continue
 
                 seen_links.add(link)
@@ -391,12 +388,15 @@ def main():
                     "link": link,
                     "snippet": snippet,
                     "week_label": week_label or "이주의 투자유치",
-                    "weekly_key": weekly_key,
+                    "weekly_key": weekly_key or "",
                     "published_kst": published_kst,
                 })
                 continue
 
             # ===== 일반 기사 =====
+            if link in seen_links or norm_title in seen_titles:
+                continue
+
             if link in sent_url_set or norm_title in sent_title_set:
                 continue
 
@@ -434,9 +434,10 @@ def main():
     competitors.sort(key=lambda x: (x["priority"], x["published_kst"]), reverse=True)
     trends.sort(key=lambda x: (x["priority"], x["published_kst"]), reverse=True)
 
-    # 이주의 투자유치는 섹션 하단, 최신순
+    # 투자유치 섹션은 최신순
     weekly_funding_articles.sort(key=lambda x: x["published_kst"], reverse=True)
 
+    # 전부 비어 있으면 종료
     if not competitors and not trends and not weekly_funding_articles:
         send_telegram("📡 신규 기사 없음 (최근 48시간 / 중복 제외)")
         save_state(state)
@@ -444,6 +445,7 @@ def main():
 
     msg = "📡 <b>워크랩 리서치 브리핑</b>\n(최근 48시간 / 중복 제외 / 경쟁사·기술 상위 10건)\n\n"
 
+    # 1) 경쟁사 흐름
     if competitors:
         msg += "━━━━━━━━━━\n<b>🏢 경쟁사 흐름</b>\n━━━━━━━━━━\n\n"
         for i, a in enumerate(competitors, 1):
@@ -454,6 +456,7 @@ def main():
                 msg += f"- {html.escape(a['snippet'])}\n"
             msg += "\n"
 
+    # 2) 기술 트렌드
     if trends:
         msg += "━━━━━━━━━━\n<b>📈 기술 트렌드</b>\n━━━━━━━━━━\n\n"
         for i, a in enumerate(trends, 1):
@@ -463,6 +466,7 @@ def main():
                 msg += f"- {html.escape(a['snippet'])}\n"
             msg += "\n"
 
+    # 3) 이주의 투자유치 (항상 마지막)
     if weekly_funding_articles:
         msg += "━━━━━━━━━━\n<b>💸 이주의 투자유치</b>\n━━━━━━━━━━\n\n"
         for a in weekly_funding_articles:
@@ -474,7 +478,7 @@ def main():
 
     send_telegram(msg)
 
-    # 전송 성공한 항목들 기록
+    # 전송 성공 항목들 기록
     sent_at = now_kst.isoformat()
 
     for a in top_regular:
@@ -489,7 +493,7 @@ def main():
         state["sent"].append({
             "url": a["link"],
             "title_norm": a["title_norm"],
-            "weekly_key": a["weekly_key"] or "",
+            "weekly_key": a["weekly_key"],
             "sent_at": sent_at
         })
 
